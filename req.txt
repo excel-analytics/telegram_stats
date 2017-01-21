@@ -1,0 +1,8 @@
+numpy
+Pillow
+pymongo
+pymorphy2
+nltk
+wordcloud
+stop_words
+tqdm
