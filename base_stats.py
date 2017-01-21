@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 TOKENIZER = RegexpTokenizer(r'\w+')
 URL_PATTERN = re.compile(r'https?:\/\/[^\s]*')
+DIGITS = re.compile(r'\d+')
 
 MORPH = pymorphy2.MorphAnalyzer()
 STOPS = get_stop_words('ru')
@@ -26,7 +27,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 def count_words(text):
-    text = re.sub(URL_PATTERN, '', text)
+    text = re.sub(URL_PATTERN, ' ', text)
+    text = re.sub(DIGITS, ' ', text)
     result_count = Counter()
     tokens = [MORPH.parse(token)[0].normal_form for token in TOKENIZER.tokenize(text)]
     tokens_no_stops = [token for token in tokens if token not in STOPS]
@@ -65,16 +67,25 @@ def store_word_counters(chat_id, word_stat):
     logging.info('Storing word count stat for chat {}.'.format(chat_id))
     # Connecting to word count stat collection.
     word_stat_collection = pymongo.MongoClient()['tg_backup']['word_stat']
+    counters = {key.replace('$', ''): value for (key, value) in word_stat.items()}
     if word_stat_collection.find_one({'chat_id': chat_id}) is None:
         # No stat exists
         word_stat_collection.insert_one({
             'chat_id': chat_id,
-            'counters': {key.replace('$', ''): value for (key, value) in word_stat.items()}
+            'counters': counters
         })
     else:
         # Just update stats
         word_stat_collection.find_one_and_update({'chat_id': chat_id},
-            {'$set': {'counters': {key.replace('$', ''): value for (key, value) in word_stat.items()}}})
+            {'$set': {'counters': counters}})
+
+
+def get_name_by_id(user_id):
+    metadata = pymongo.MongoClient()['tg_backup']['metadata']
+    acc = metadata.find_one({'id': '$' + user_id})
+    if acc is None:
+        return user_id
+    return acc.get('username', acc.get('print_name', user_id))
 
 
 def make_word_clouds(chat_id):
@@ -90,12 +101,14 @@ def make_word_clouds(chat_id):
     if os.path.isdir(word_clouds_dir):
         shutil.rmtree(word_clouds_dir)
     os.makedirs(word_clouds_dir)
+    
     picbar = tqdm(total=len(word_counters), unit='pic')
     for user_id, c in word_counters.items():
         # Docs: https://amueller.github.io/word_cloud/
         wc = WordCloud(width=1000, height=1000)
         wc.generate_from_frequencies(list(c.items()))
-        wc.to_file(os.path.join(word_clouds_dir, str(user_id) + '.png'))
+        name = get_name_by_id(user_id)
+        wc.to_file(os.path.join(word_clouds_dir, name + '.png'))
         picbar.update(1)
     picbar.close()
 
@@ -141,10 +154,10 @@ def print_top_words(chat_id, n=10):
     tf_idf = word_stat_collection.find_one({
         'chat_id': chat_id
     })
-    metadata = pymongo.MongoClient()['tg_backup']['metadata']
+    
     tf_idf = tf_idf['tf_idf']
     for user in tf_idf.keys():
-        name = metadata.find_one({'id': '$' + user})['print_name']
+        name = get_name_by_id(user)
         print('\n===========================\n{}\n==========================='.format(name))
         terms = tf_idf[user]
         for term, rating in sorted(terms.items(), key=lambda x: x[1], reverse=True)[:n]:
