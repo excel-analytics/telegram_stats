@@ -85,7 +85,12 @@ def get_name_by_id(user_id):
     acc = metadata.find_one({'id': '$' + user_id})
     if acc is None:
         return user_id
-    return acc.get('username', acc.get('print_name', user_id))
+    name = acc.get('username', '')
+    if name == '':
+        name = acc.get('print_name', '')
+    if name == '':
+        name = str(user_id)
+    return name
 
 
 def make_word_clouds(chat_id):
